@@ -1,0 +1,37 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: 当前文件",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "env":{ "CUDA_VISIBLE_DEVICES":"2" },
+            "args": 
+            [
+                "--data_dir", "/home/fangchao/tianjiayi/glue_data",
+                "--job_id", "BWN_W1A4", 
+                "--batch_size", "16",
+                "--learning_rate", "1e-5", 
+                "--eval_step", "1000", 
+                "--num_train_epochs", "12", 
+                "--ACT2FN", "relu", 
+                "--output_dir", "output_bwn/BWN_W1A4/mrpc", 
+                "--kd_type", "two_stage" ,
+                "--task_name", "mrpc" ,
+                "--teacher_model", "models/eval_mrpc_org",
+                "--student_model", "models/eval_mrpc_org", 
+                "--weight_bits", "1", 
+                "--weight_quant_method", "bwn", 
+                "--input_bits", "4", 
+                "--input_quant_method", "lsq",
+                "--learnable_scaling"
+            ],
+            "justMyCode": false
+        }
+    ]
+}
