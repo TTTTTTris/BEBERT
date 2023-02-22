@@ -1,10 +1,10 @@
-# BEBERT: Efficient and robust binary ensemble BERT
-
-## Introduction
+# BEBERT: Efficient and Robust Binary Ensemble BERT
 
 Created by [jiayi Tian](https://ttttttris.github.io/), [Chao Fang](https://0-scholar-google-com.brum.beds.ac.uk/citations?hl=zh-CN&user=3wg-QTgAAAAJ), [Zhongfeng Wang](https://0-scholar-google-com.brum.beds.ac.uk/citations?user=faC-qekAAAAJ&hl=zh-CN) from Nanjing University and [Haonan Wang](https://0-scholar-google-com.brum.beds.ac.uk/citations?user=AQuXJEkAAAAJ&hl=zh-CN) from the University of Southern California.
 
-This project is an implementation of our paper submitted to ICASSP 2023 *BEBERT: Efficient and robust binary ensemble BERT* [[PDF](http://arxiv.org/abs/2210.15976)].
+This project is an implementation of our paper at ICASSP 2023 *BEBERT: Efficient and robust binary ensemble BERT* [[PDF](http://arxiv.org/abs/2210.15976)].
+
+## Introduction
 
 Pre-trained BERT models have achieved impressive accuracy on natural language processing (NLP) tasks, while the excessive amount of parameters hinders them from efficient deployment on edge devices. Binarization of the BERT models can significantly alleviate these issues but come with a severe accuracy drop compared with their full-precision counterparts. In this paper, to the best of our knowledge, we make the first attempt to employ ensemble learning on binary BERT models to improve accuracy and retain computational efficiency, yielding a superior model named Binary Ensemble BERT (BEBERT). Furthermore, we propose an efficient scheme to speed up the training process without compromising accuracy by removing the knowledge distillation procedures during ensemble. Experimental results on the GLUE benchmark show the proposed BEBERT significantly outperforms the state-of-the-art binary BERT models in both accuracy and robustness with a 2× speedup during the training process. It also exceeds the existing compressed BERTs in accuracy, and saves 15× and 13× in FLOPs and model size, respectively, over the full-precision BERT baseline.
 
@@ -39,14 +39,11 @@ Our release code is developed based on [BinaryBERT](https://github.com/huawei-no
 If you find our work useful in your research, please consider citing:
 
 ```shell
-@misc{https://doi.org/10.48550/arxiv.2210.15976,
-  doi = {10.48550/ARXIV.2210.15976},
-  url = {https://arxiv.org/abs/2210.15976},
-  author = {Tian, Jiayi and Fang, Chao and Wang, Haonan and Wang, Zhongfeng},
-  keywords = {Computation and Language (cs.CL), FOS: Computer and information sciences, FOS: Computer and information sciences},
-  title = {BEBERT: Efficient and robust binary ensemble BERT},
-  publisher = {arXiv},
-  year = {2022},
-  copyright = {arXiv.org perpetual, non-exclusive license}
+@inproceedings{tian2023bebert,
+  title={BEBERT: Efficient and Robust Binary Ensemble BERT},
+  author={Tian, Jiayi and Fang, Chao and Wang, Haonan and Wang, Zhongfeng},
+  booktitle={2023 IEEE International Conference on Acoustics, Speech, and Signal Processing (ICASSP)},
+  year={2023},
+  organization={IEEE}
 }
 ```
