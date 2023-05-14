@@ -22,7 +22,7 @@ from helper import *
 from utils_glue import *
 import numpy as np
 import pickle
-from torch.utils.data import WeightedRandomSampler,DataLoader
+from torch.utils.data import SubsetRandomSampler, WeightedRandomSampler,DataLoader
 
 logging.basicConfig(level=logging.INFO)
 
@@ -142,7 +142,7 @@ class KDLearner(object):
             # result_to_file(result, tmp_output_eval_file)
 
     def train(self, train_examples, task_name, output_mode, eval_labels, 
-        num_labels, train_data, eval_dataloader, eval_examples, tokenizer, save_name, features, sample_weights,
+        num_labels, train_data, eval_data, eval_examples, tokenizer, save_name, features, sample_weights,
                     mm_eval_labels, mm_eval_dataloader):
         """ quant-aware pretraining + KD """
 
@@ -150,6 +150,7 @@ class KDLearner(object):
         loss_mse = MSELoss()
 
         self.teacher_model.eval()
+        eval_dataloader = DataLoader(eval_data, batch_size=self.args.batch_size, shuffle=False)
         teacher_results = self._do_eval(self.teacher_model, task_name, eval_dataloader, output_mode, eval_labels, num_labels)
         logging.info("Teacher network evaluation")
         for key in sorted(teacher_results.keys()):
@@ -180,7 +181,7 @@ class KDLearner(object):
 
             nb_tr_examples, nb_tr_steps = 0, 0
  
-            sampler = WeightedRandomSampler(sample_weights.double(), features)
+            sampler = SubsetRandomSampler(sample_weights)
             train_dataloader = DataLoader(train_data, sampler=sampler, batch_size=self.args.batch_size)
             for step, batch in enumerate(train_dataloader):
                 

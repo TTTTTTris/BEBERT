@@ -1,13 +1,15 @@
 #!/bin/bash
 
-export TASK_NAME=SST-2
+# Quantization without KD, refering to Bagging
+# Tips: If trained with data augmentation, please add --aug_train
+
+export TASK_NAME=QNLI
 export wbits=1
 export abits=4
 export JOB_ID=Ternary_W${wbits}A${abits}
 export GLUE_DIR=./glue_data
 export TEACHER_MODEL_DIR=models/dynabert/${TASK_NAME}
-export STUDENT_MODEL_DIR=output_A/Ternary_W1A4/${TASK_NAME}/kd_stage2/ 
-# output_A, B, C + _aug
+export STUDENT_MODEL_DIR=output_Bag/Ternary_W2A4/${TASK_NAME}/kd_stage2/ 
 
 if [ $abits == 4 ]
 then
@@ -19,7 +21,7 @@ ACT2FN=gelu
 fi
 
 export CUDA_VISIBLE_DEVICES=0
-python benn_glue_train_A.py \
+python bagging_glue_train.py \
     --data_dir ${GLUE_DIR} \
     --job_id ${JOB_ID} \
     --batch_size 32 \
@@ -27,8 +29,8 @@ python benn_glue_train_A.py \
     --eval_step 100 \
     --num_train_epochs 6 \
     --ACT2FN ${ACT2FN} \
-    --output_dir output_A/${JOB_ID}/${TASK_NAME} \
-    --kd_type two_stage \
+    --output_dir output_Bag/${JOB_ID}/${TASK_NAME} \
+    --kd_type no_kd \
     --task_name $TASK_NAME \
     --teacher_model ${TEACHER_MODEL_DIR} \
     --student_model ${STUDENT_MODEL_DIR} \
@@ -39,4 +41,4 @@ python benn_glue_train_A.py \
     --clip_lr 1e-4 \
     --learnable_scaling \
     --is_binarybert \
-    --do_eval 2>&1 | tee -a nohup_eval_out/eval_${TASK_NAME}_A.out
+    --split 2>&1 | tee -a nohup_out/bagging_${TASK_NAME}.out

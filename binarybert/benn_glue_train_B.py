@@ -15,7 +15,6 @@
 from __future__ import absolute_import, division, print_function
 import argparse
 import copy
-from ensurepip import bootstrap
 from benn_kd_glue import KDLearner
 from helper import *
 from utils_glue import *
@@ -177,7 +176,7 @@ if args.gradient_accumulation_steps < 1:
 args.batch_size = args.batch_size // args.gradient_accumulation_steps
 
 train_features = convert_examples_to_features(train_examples, label_list,
-                                                args.max_seq_length, tokenizer, output_mode)
+                                            args.max_seq_length, tokenizer, output_mode)
 train_data, _ = get_tensor_data(output_mode, train_features)
 # train_sampler = RandomSampler(train_data)
 train_dataloader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, drop_last = True)
@@ -193,37 +192,31 @@ eval_dataloader = DataLoader(eval_data, batch_size=args.batch_size, shuffle=Fals
 
 # define the model
 print('==> building model',args.task_name,'...')
-# if task_name == "mnli":
-    # processor = processors["mnli-mm"]()
+if task_name == "mnli":
+    processor = processors["mnli-mm"]()
     
-    # mm_eval_examples = processor.get_dev_examples(data_dir)
-    # mm_eval_features = convert_examples_to_features(
-        # mm_eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-    # mm_eval_data, mm_eval_labels = get_tensor_data(output_mode, mm_eval_features)
+    mm_eval_examples = processor.get_dev_examples(data_dir)
+    mm_eval_features = convert_examples_to_features(
+        mm_eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
+    mm_eval_data, mm_eval_labels = get_tensor_data(output_mode, mm_eval_features)
 
-    # logging.info("***** Running mm evaluation *****")
-    # logging.info("  Num examples = %d", len(mm_eval_examples))
+    logging.info("***** Running mm evaluation *****")
+    logging.info("  Num examples = %d", len(mm_eval_examples))
 
-    # mm_eval_sampler = SequentialSampler(mm_eval_data)
-    # mm_eval_dataloader = DataLoader(mm_eval_data, sampler=mm_eval_sampler,
-                                    # batch_size=args.batch_size)
-# else:
-mm_eval_labels = None
-mm_eval_dataloader = None
-
-if not args.do_eval: # need the teacher model for training
-    teacher_model = BertForSequenceClassification.from_pretrained(args.teacher_model,config=config)
-    teacher_model.to(device)
-    if n_gpu > 1:
-        teacher_model = torch.nn.DataParallel(teacher_model)
+    mm_eval_sampler = SequentialSampler(mm_eval_data)
+    mm_eval_dataloader = DataLoader(mm_eval_data, sampler=mm_eval_sampler,
+                                    batch_size=args.batch_size)
 else:
-    teacher_model = None
+    mm_eval_labels = None
+    mm_eval_dataloader = None
 
-# logging.info("Rename the config and checkpoint to restore if necessary.")
-# if not os.path.isfile(os.path.join(args.student_model, 'config.json')):
-#     os.system('cp -v %s/%s %s/%s' % (args.student_model, 'kd_stage2_config.json', args.student_model, 'config.json'))
-# if not os.path.isfile(os.path.join(args.student_model, 'pytorch_model.bin')):
-#     os.system('cp -v %s/%s %s/%s' % (args.student_model, 'kd_stage2_pytorch_model.bin', args.student_model, 'pytorch_model.bin'))
+# if not args.do_eval: # need the teacher model for training
+teacher_model = BertForSequenceClassification.from_pretrained(args.teacher_model,config=config)
+teacher_model.to(device)
+if n_gpu > 1:
+    teacher_model = torch.nn.DataParallel(teacher_model)
+# else:
+    # teacher_model = None
 
 if args.split:
     # rename the checkpoint to restore
@@ -252,7 +245,7 @@ student_model.to(device)
 if n_gpu > 1:
     student_model = torch.nn.DataParallel(student_model)
 
-def train(features, stage, save_name="pytorch_model.bin",sample_weights=torch.Tensor(np.ones((10000,1))/10000)):
+def train(features, stage, save_name="pytorch_model.bin",sample_weights=torch.Tensor(np.ones((10000,))/10000)):
     """ perform training """
     if args.kd_type == 'joint_kd':
         learner.build()
@@ -298,30 +291,41 @@ def train(features, stage, save_name="pytorch_model.bin",sample_weights=torch.Te
 
 def update_weights(softmax_output, target, sample_weights):
     print("start updating..")
-    pred_numpy = softmax_output.numpy()
-    target_numpy = target.numpy()
-    # pred_numpy = torch.squeeze(pred_numpy)
-    sample_weights = sample_weights.numpy()
-    # miss = torch.Tensor([int(x) for x in (pred_numpy != target_numpy)]) # not all of GLUE is simple_accuracy
-    # miss2 = torch.Tensor([x if x==1 else -1 for x in miss])
-    # miss = miss.unsqueeze(1)
-    pred_numpy = pred_numpy.squeeze()
-    target_numpy = target_numpy.squeeze()
-    miss = [int(x) for x in (pred_numpy != target_numpy)]
-    miss2 = [x if x==1 else -1 for x in miss]
-    miss = np.reshape(np.array(miss),[features,1])
-    err_m = np.matmul(sample_weights.transpose(),miss) / np.sum(sample_weights)
-    alpha_m = 0.5*np.log((1 - err_m) / float(err_m))
-    prior_exp = (alpha_m * miss2)
-    prior_exp = prior_exp.transpose()
-    sample_weights_new = sample_weights * np.exp(prior_exp)
 
-    # err_m = torch.mm(torch.t(sample_weights),miss) / torch.sum(sample_weights)
-    # alpha_m = 0.5*torch.log((1 - err_m) / float(err_m))
-    # prior_exp = torch.t(torch.Tensor(alpha_m * miss2))
-    # sample_weights_new = sample_weights * torch.exp(prior_exp)
+    # get preds,targets,sample_weights
+    pred_numpy = np.squeeze(softmax_output.numpy())
+    target_numpy = np.squeeze(target.numpy())
+    sample_weights = np.squeeze(sample_weights.numpy())
+
+    # compute err - classification
+    # miss = [int(x) for x in (pred_numpy != target_numpy)]
+    # miss2 = [x if x==1 else -1 for x in miss]
+    # miss = np.reshape(np.array(miss),[features,1])
+    # err_m = np.matmul(sample_weights.transpose(),miss) / np.sum(sample_weights)
+
+    # compute err - regression
+    zmax = (np.abs(pred_numpy - target_numpy)).max()
+    err_i = ((pred_numpy - target_numpy) / zmax)**2
+    err = np.sum(sample_weights * err_i) 
+    print('err:',err)
+
+    # compute alpha - classification
+    # alpha_m = 0.5*np.log((1 - err_m) / float(err_m))
+
+    # compute alpha - regression
+    alpha_m = err/(1-err)
+
+    # update sample weights - classification
+    # sample_weights_new = sample_weights * np.exp((alpha_m * miss2).transpose)
+    # sample_weights_new = torch.from_numpy(sample_weights_new)
+
+    # update sample weights - regression
+    weights = alpha_m ** (np.ones(err_i.shape)-err_i)
+    sample_weights_new = sample_weights * weights / np.sum(sample_weights * weights)
     sample_weights_new = torch.from_numpy(sample_weights_new)
-    alpha_m = torch.from_numpy(alpha_m)
+
+    print('alpha_m',alpha_m)
+    alpha_m = torch.tensor([alpha_m])
     print("weights updated!")
     return sample_weights_new, alpha_m
 
@@ -343,77 +347,70 @@ def sample_models(features, stage, boosting_iters, sample_weights):
             input_ids, input_mask, segment_ids, label_ids, seq_lengths = data
             batch_size = input_ids.size(0)
             student_logits, _, _ = learner.student_model(input_ids, segment_ids, input_mask)
-            pred_output[batch_idx*batch_size:(batch_idx+1)*batch_size,:] = student_logits.max(1, keepdim=True)[1].data.cpu()
+            pred_output[batch_idx*batch_size:(batch_idx+1)*batch_size,:] = student_logits.data.cpu() # regression
+            # pred_output[batch_idx*batch_size:(batch_idx+1)*batch_size,:] = student_logits.max(1, keepdim=True)[1].data.cpu() # classification
             label_in_tensor[batch_idx*batch_size:(batch_idx+1)*batch_size] = label_ids
-
         best_sample_weights, best_alpha_m = update_weights(pred_output, label_in_tensor, sample_weights)
 
     return best_sample_weights, best_alpha_m
 
-def use_sampled_model(sampled_model, data):
-    # print(learner.student_model.bert.encoder.layer._modules['0'].attention.self.key.weight)
-    learner.student_model.load_state_dict(torch.load(sampled_model))
-    learner.student_model.eval()
-    # print(learner.student_model.bert.encoder.layer._modules['0'].attention.self.key.weight)
-    with torch.no_grad():
-        input_ids, input_mask, segment_ids, label_ids, seq_lengths = data
-        student_logits, _, _ = learner.student_model(input_ids, segment_ids, input_mask)
+# def use_sampled_model(sampled_model, data):
+    # learner.student_model.load_state_dict(torch.load(sampled_model))
+    # learner.student_model.eval()
+    # with torch.no_grad():
+        # input_ids, input_mask, segment_ids, label_ids, seq_lengths = data
+        # student_logits, _, _ = learner.student_model(input_ids, segment_ids, input_mask)
 
-    return student_logits
+    # return student_logits
 
-def combine_softmax_output(pred_test_i, pred_test, alpha_m_mat, i):
-    pred_test_delta = alpha_m_mat[0][i] * pred_test_i
-    pred_test = torch.add(pred_test, pred_test_delta.cpu())
-    return pred_test
+# def combine_softmax_output(pred_test_i, pred_test, alpha_m_mat, i):
+    # pred_test_delta = alpha_m_mat[0][i] * pred_test_i
+    # pred_test = torch.add(pred_test, pred_test_delta.cpu())
+    # return pred_test
 
-def most_common_element(pred_mat, alpha_m_mat, num_boost):
-    pred_most = []
-    pred_mat = pred_mat.astype(int)
-    # print("most_common_element: ",task_name, "***",args.task_name)
-    for i in range(args.batch_size):
-        best_value = -1000
-        best_pred = -1
-        if task_name == "mnli":
-            for j in range(3):
-                mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
-                if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
-                    best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
-                    best_pred = j
-        if task_name == "sts-b":
-            for j in range(5):
-                mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
-                if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
-                    best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
-                    best_pred = j
-        else:
-            for j in range(2):
-                mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
-                if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
-                    best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
-                    best_pred = j
+# def most_common_element(pred_mat, alpha_m_mat, num_boost):
+    # pred_most = []
+    # pred_mat = pred_mat.astype(int)
+    # for i in range(args.batch_size):
+        # best_value = -1000
+        # best_pred = -1
+        # if task_name == "mnli":
+        #     for j in range(3):
+        #         mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
+        #         if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
+        #             best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
+        #             best_pred = j
+        # if task_name == "sts-b":
+        #     for j in range(5):
+        #         mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
+        #         if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
+        #             best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
+        #             best_pred = j
+        # else:
+            # for j in range(2):
+            #     mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
+            #     if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
+            #         best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
+            #         best_pred = j
 
-        pred_most = np.append(pred_most, best_pred)
-    return pred_most
+        # pred_most = np.append(pred_most, best_pred)
+    # return pred_most
 
-if __name__ == '__main__': # 1(ternary)+1(tws-kd_stage_1)+8(tws-kd_stage2)
+if __name__ == '__main__': # pred_kd
     learner = KDLearner(args, device, student_model, teacher_model,num_train_optimization_steps)
-    if(task_name == "qqp" or task_name == "mnli"):
-        boosting = 4
-    else:
-        boosting = 8
+    boosting = 2
 
-    features = len(train_examples)
     if(task_name == 'cola'):
         category = 'mcc'
-    # elif(task_name == 'mrpc' or task_name == 'qqp'):        
-    #     category = 'acc_and_f1'
+    elif(task_name == 'sts-b'):
+        category = 'corr'
     else:
         category = 'acc'
 
-    sample_weights_new = torch.Tensor(np.ones((features,1)) / features)
+    features = len(train_examples)
+    sample_weights_new = torch.Tensor(np.ones((features,)) / features)
     index_weak_cls = 0
     alpha_m_mat = torch.Tensor()
-    learner.student_model.load_state_dict(torch.load(os.path.join(args.output_dir,'kd_stage1','pytorch_model.bin')))
 
     # Update sample_weights
     for i in range(boosting):
@@ -421,45 +418,74 @@ if __name__ == '__main__': # 1(ternary)+1(tws-kd_stage_1)+8(tws-kd_stage2)
         sample_weights_new, alpha_m = sample_models(features, stage=1, boosting_iters=i, sample_weights=sample_weights_new)
         print('%s %d-th Sample done !' % (str(datetime.datetime.utcnow()), i))
         index_weak_cls = index_weak_cls + 1
-        alpha_m_mat = torch.cat((alpha_m_mat, alpha_m), 1)
+        alpha_m_mat = torch.cat((alpha_m_mat, alpha_m))
         print("sample_weights_new",sample_weights_new,'\n')
-    print("alpha_m_mat: ",alpha_m_mat,'\n')
+    alpha_m_log = -np.log(alpha_m_mat)
+    print("alpha_m_mat: ",alpha_m_mat,alpha_m_log,'\n')
     print("kd_stage2 boosting finished!")
     pred_store = torch.Tensor()
-    # if task_name == "mnli":
-        # evaluate_data = mm_eval_dataloader
-        # evaluate_labels = mm_eval_labels
-    # else:
-    evaluate_data = eval_dataloader
-    evaluate_labels = eval_labels
 
     #use the sampled model
-    for num_boost in range(1,boosting):
-        final_result_np = []
-        final_result = {}
-        for batch_idx, data in enumerate(evaluate_data):
-            data = tuple(t.to(device) for t in data)
-            pred_store = torch.Tensor()
-            for i in range(num_boost):
-                sampled_model = args.output_dir + "/kd_stage2/" + str(i) + ".bin"
-                pred_test_i = use_sampled_model(sampled_model,data)
-                # print("pred_test_i: ",pred_test_i)
-                if(pred_test_i.size()[0]!=(args.batch_size)):
-                    continue
-                pred = pred_test_i.max(1, keepdim=True)[1]
-                pred_store = torch.cat((pred_store, pred.data.cpu().float()), 1)
-                # print("pred_store: ",pred_store)
-            if(pred_test_i.size()[0]!=(args.batch_size)):
-                continue
-            pred_most = most_common_element(pred_store.numpy(), alpha_m_mat.numpy(), num_boost)
-            # print("result: ",pred_most,"\n",eval_labels[batch_idx*args.batch_size:(batch_idx+1)*args.batch_size].numpy(),"\n")
-            result = compute_metrics(task_name, pred_most, evaluate_labels[batch_idx*args.batch_size:(batch_idx+1)*args.batch_size].numpy())
+    logits = {0:[],1:[]}
+    preds = {0:[],1:[]}
+    preds = {0:[],1:[]}
+    result = {0:{},1:{}}
+    pred_store = torch.Tensor()
+    for batch_idx, data in enumerate(eval_dataloader):
+        data = tuple(t.to(device) for t in data)
+        for i in range(2):
+            student_model.load_state_dict(torch.load( args.output_dir + "/kd_stage2/" + str(i) + ".bin"))
+            student_model.eval()
+            with torch.no_grad():
+                input_ids, input_mask, segment_ids, label_ids, seq_lengths = data
+                logits[i], _, _ = student_model(input_ids, segment_ids, input_mask)
+            if len(preds[i]) == 0:
+                preds[i].append(logits[i].detach().cpu().numpy())
+            else:
+                preds[i][0] = np.append(preds[i][0], logits[i].detach().cpu().numpy(), axis=0)
 
-            final_result_np = np.append(final_result_np, result[category])
-        # final_result = dict(final_result, **result)
-        # output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
-        # result_to_file(final_result, output_eval_file)
+    preds_ens = np.append(alpha_m_mat[0] * preds[0][0],alpha_m_mat[1] * preds[1][0],axis=1)
+    preds_ens_ = np.append(alpha_m_log[0] * preds[0][0],alpha_m_log[1] * preds[1][0],axis=1)
 
-        print('--------------------'+'num_boost: '+str(num_boost)+'--------------------')
-        print('\n Test accuracy from selected model:',np.mean(final_result_np))
+    if output_mode == "classification":
+        # pred_store = np.argmax(alpha_m_mat[0] * preds[0][0] + alpha_m_mat[1] * preds[1][0], axis=1)
+        pred_store = np.argmax(np.sum(preds_ens,axis=1), axis=1)
+    elif output_mode == "regression":
+        # pred_store = np.squeeze(alpha_m_log * np.sum(preds_ens,axis=1)/2)
+        pred_store = np.squeeze(np.sum(preds_ens_,axis=1)/boosting)
+    final_result = compute_metrics(task_name, pred_store, eval_labels.numpy())
+    
+    for i in range(2):
+        if output_mode == "classification":
+            preds[i] = np.argmax(preds[i][0], axis=1)
+        elif output_mode == "regression":
+            preds[i] = np.squeeze(preds[i][0])
+        result[i] = compute_metrics(task_name, preds[i], eval_labels.numpy())
+
+    logging.info('Test accuracy from selected model: %f,%f,%f',result[0][category],result[1][category],final_result[category])
+
+    # #use the sampled model
+    # for num_boost in range(1,boosting):
+    #     final_result_np = []
+    #     final_result = {}
+    #     for batch_idx, data in enumerate(eval_data):
+    #         data = tuple(t.to(device) for t in data)
+    #         pred_store = torch.Tensor()
+    #         for i in range(num_boost):
+    #             sampled_model = args.output_dir + "/kd_stage2/" + str(i) + ".bin"
+    #             pred_test_i = use_sampled_model(sampled_model,data)
+    #             if(pred_test_i.size()[0]!=(args.batch_size)):
+    #                 continue
+    #             pred = pred_test_i.max(1, keepdim=True)[1]
+    #             pred_store = torch.cat((pred_store, pred.data.cpu().float()), 1)
+    #         if(pred_test_i.size()[0]!=(args.batch_size)):
+    #             continue
+    #         pred_most = most_common_element(pred_store.numpy(), alpha_m_mat.numpy(), num_boost)
+    #         # print("result: ",pred_most,"\n",eval_labels[batch_idx*args.batch_size:(batch_idx+1)*args.batch_size].numpy(),"\n")
+    #         result = compute_metrics(task_name, pred_most, eval_labels[batch_idx*args.batch_size:(batch_idx+1)*args.batch_size].numpy())
+
+    #         final_result_np = np.append(final_result_np, result[category])
+
+    #     print('--------------------'+'num_boost: '+str(num_boost)+'--------------------')
+    #     print('\n Test accuracy from selected model:',np.mean(final_result_np))
 

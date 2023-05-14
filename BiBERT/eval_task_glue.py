@@ -215,8 +215,9 @@ def main():
         assert args.pred_distill or args.intermediate_distill, "'pred_distill' and 'intermediate_distill', at least one must be True"
     summaryWriter = SummaryWriter(args.output_dir)
     logger.info('The args: {}'.format(args))
-    task_name = args.task_name.lower()
+    task_name = args.task_name
     data_dir = os.path.join(args.data_dir, task_name)
+    task_name = args.task_name.lower()
     output_dir = os.path.join(args.output_dir, task_name)
 
     if not os.path.exists(output_dir):

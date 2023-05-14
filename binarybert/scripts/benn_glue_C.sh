@@ -42,4 +42,4 @@ python benn_glue_train_C.py \
     --clip_lr 1e-4 \
     --learnable_scaling \
     --is_binarybert \
-    --do_eval  2>&1 | tee -a nohup_eval_out/${TASK_NAME}_C.out
+    --split 2>&1 | tee -a nohup_out/${TASK_NAME}_C.out

@@ -1,6 +1,6 @@
 ## BEBERT: Efficient and robust binary ensemble BERT
 
-Created by [jiayi Tian](https://ttttttris.github.io/), [Chao Fang](https://0-scholar-google-com.brum.beds.ac.uk/citations?hl=zh-CN&user=3wg-QTgAAAAJ), [Zhongfeng Wang](https://0-scholar-google-com.brum.beds.ac.uk/citations?user=faC-qekAAAAJ&hl=zh-CN) from Nanjing University and [Haonan Wang](https://0-scholar-google-com.brum.beds.ac.uk/citations?user=AQuXJEkAAAAJ&hl=zh-CN)the University of Southern California.
+Created by [jiayi Tian](https://ttttttris.github.io/), [Chao Fang](https://0-scholar-google-com.brum.beds.ac.uk/citations?hl=zh-CN&user=3wg-QTgAAAAJ), [Zhongfeng Wang](https://0-scholar-google-com.brum.beds.ac.uk/citations?user=faC-qekAAAAJ&hl=zh-CN) from Nanjing University and [Haonan Wang](https://0-scholar-google-com.brum.beds.ac.uk/citations?user=AQuXJEkAAAAJ&hl=zh-CN) from the University of Southern California.
 
 ![model architecture](./assets/BEBERT_fig1.png)
 

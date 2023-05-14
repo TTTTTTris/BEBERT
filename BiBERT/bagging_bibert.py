@@ -13,7 +13,7 @@ from tqdm import tqdm, trange
 
 import numpy as np
 import torch
-from torch.utils.data import WeightedRandomSampler, DataLoader, RandomSampler, SequentialSampler, TensorDataset
+from torch.utils.data import SubsetRandomSampler, DataLoader, RandomSampler, SequentialSampler, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn import CrossEntropyLoss, MSELoss, CosineSimilarity
 
@@ -330,7 +330,8 @@ output_mode = output_modes[task_name]
 label_list = processor.get_labels()
 num_labels = len(label_list)
 
-tokenizer = BertTokenizer.from_pretrained(args.student_model, do_lower_case=True)
+tokenizer = BertTokenizer.from_pretrained(args.student_model,
+                                            do_lower_case=True)
 
 # if not args.do_eval:
 if args.aug_train:
@@ -355,7 +356,7 @@ else:
 num_train_optimization_steps = int(
     len(train_features) / args.batch_size) * args.num_train_epochs
 train_data, _ = get_tensor_data(output_mode, train_features)
-train_dataloader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+# train_dataloader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
 
 try:
     dev_file = train_file = os.path.join(processed_data_dir, 'dev_data')
@@ -388,37 +389,33 @@ if task_name == "mnli":
     mm_eval_dataloader = DataLoader(mm_eval_data,
                                     sampler=mm_eval_sampler,
                                     batch_size=args.batch_size)
-else:
-    mm_eval_labels = None
-    mm_eval_dataloader = None
 
 # if not args.do_eval:
 teacher_model = BertForSequenceClassification.from_pretrained(
-        args.teacher_model, num_labels=num_labels)
+    args.teacher_model, num_labels=num_labels)
 teacher_model.to(device)
+teacher_model.eval()
 
-if not args.do_eval:
-    teacher_model.eval()
-    result = do_eval(teacher_model, task_name, eval_dataloader, device,
+result = do_eval(teacher_model, task_name, eval_dataloader, device,
                     output_mode, eval_labels, num_labels)
 
-    if task_name in acc_tasks:
-        if task_name in ['sst-2', 'mnli', 'qnli', 'rte']:
-            fp32_performance = f"acc:{result['acc']}"
-        elif task_name in ['mrpc', 'qqp']:
-            fp32_performance = f"f1/acc:{result['f1']}/{result['acc']}"
-    if task_name in corr_tasks:
-        fp32_performance = f"pearson/spearmanr:{result['pearson']}/{result['spearmanr']}"
+if task_name in acc_tasks:
+    if task_name in ['sst-2', 'mnli', 'qnli', 'rte']:
+        fp32_performance = f"acc:{result['acc']}"
+    elif task_name in ['mrpc', 'qqp']:
+        fp32_performance = f"f1/acc:{result['f1']}/{result['acc']}"
+if task_name in corr_tasks:
+    fp32_performance = f"pearson/spearmanr:{result['pearson']}/{result['spearmanr']}"
 
-    if task_name in mcc_tasks:
-        fp32_performance = f"mcc:{result['mcc']}"
+if task_name in mcc_tasks:
+    fp32_performance = f"mcc:{result['mcc']}"
 
-    if task_name == "mnli":
-        result = do_eval(teacher_model, 'mnli-mm', mm_eval_dataloader, device,
-                            output_mode, mm_eval_labels, num_labels)
-        fp32_performance += f"  mm-acc:{result['acc']}"
-    fp32_performance = task_name + ' fp32   ' + fp32_performance
-    logger.info(f"teacher_model performance = {fp32_performance}\n")
+if task_name == "mnli":
+    result = do_eval(teacher_model, 'mnli-mm', mm_eval_dataloader, device,
+                        output_mode, mm_eval_labels, num_labels)
+    fp32_performance += f"  mm-acc:{result['acc']}"
+fp32_performance = task_name + ' fp32   ' + fp32_performance
+logger.info(f"teacher_model performance = {fp32_performance}\n")
 
 student_config = BertConfig.from_pretrained(
     args.student_model,
@@ -427,6 +424,8 @@ student_config = BertConfig.from_pretrained(
     embedding_bits=args.embedding_bits,
     input_bits=args.input_bits,
     clip_val=args.clip_val)
+# student_model = QuantBertForSequenceClassification.from_pretrained(
+    # args.student_model, config=student_config, num_labels=num_labels)
 student_model = QuantBertForSequenceClassification.from_pretrained(args.student_model, config=student_config, num_labels=num_labels)
 
 student_model.to(device)
@@ -496,7 +495,7 @@ def train(teacher_model, student_model, save_name, size, sample_weights):
             nb_tr_examples, nb_tr_steps = 0, 0
             student_model.train()
 
-            sampler = WeightedRandomSampler(sample_weights.double(), size)
+            sampler = SubsetRandomSampler(sample_weights)
             train_dataloader = DataLoader(train_data, sampler=sampler, batch_size=args.batch_size)
             for step, batch in enumerate(
                     tqdm(train_dataloader, desc="Iteration", ascii=True)):
@@ -742,123 +741,40 @@ def train(teacher_model, student_model, save_name, size, sample_weights):
                                 output_config_file)
                             tokenizer.save_vocabulary(output_quant_dir)
 
-def update_weights(softmax_output, target, sample_weights):
-    print("start updating..")
-
-    # get preds,targets,sample_weights
-    pred_numpy = np.squeeze(softmax_output.numpy())
-    target_numpy = np.squeeze(target.numpy())
-    sample_weights = np.squeeze(sample_weights.numpy())
-
-    # compute err - classification
-    # miss = [int(x) for x in (pred_numpy != target_numpy)]
-    # miss2 = [x if x==1 else -1 for x in miss]
-    # miss = np.reshape(np.array(miss),[size,1])
-    # err_m = np.matmul(sample_weights.transpose(),miss) / np.sum(sample_weights)
-
-    # compute err - regression
-    zmax = (np.abs(pred_numpy - target_numpy)).max()
-    err_i = ((pred_numpy - target_numpy) / zmax)**2
-    err = np.sum(sample_weights * err_i) 
-    print('err:',err)
-
-    # compute alpha - classification
-    # alpha_m = 0.5*np.log((1 - err_m) / float(err_m))
-    # prior_exp = (alpha_m * miss2)
-    # prior_exp = prior_exp.transpose()
-
-    # compute alpha - regression
-    alpha_m = err/(1-err)
-
-    # update sample weights - classification
-    # sample_weights_new = sample_weights * np.exp(-alpha_m * pred_numpy * target_numpy) / np.sum(sample_weights)
-    # sample_weights_new = torch.from_numpy(sample_weights_new)
-
-    # update sample weights - regression
-    weights = alpha_m ** (np.ones(err_i.shape)-err_i)
-    sample_weights_new = sample_weights * weights / np.sum(sample_weights * weights)
-    sample_weights_new = torch.from_numpy(sample_weights_new)
-
-    print(alpha_m)
-    alpha_m = torch.tensor([alpha_m])
-    print("weights updated!")
-    return sample_weights_new, alpha_m
-
-def sample_models(teacher_model, student_model, size, boosting_iters, sample_weights):
-    print(str(datetime.datetime.utcnow())+" Start boosting iter: "+str(boosting_iters) )
+def sample_models(teacher_model, student_model, size, bagging_iters, sample_weights):
+    print(str(datetime.datetime.utcnow())+" Start bagging iter: "+str(bagging_iters) )
     print('===> Start retraining ...')
     if not args.do_eval:
-        train(teacher_model, student_model, str(boosting_iters), size, sample_weights)
+        train(teacher_model, student_model, str(bagging_iters), size, sample_weights)
 
-    sampled_model = args.output_dir + str(boosting_iters) + ".bin"
-    student_model.load_state_dict(torch.load(sampled_model))
-    student_model.eval()
-    with torch.no_grad():
-        pred_output = torch.Tensor(np.zeros((size, 1))) #torch tensor in cpu
-        label_in_tensor = torch.Tensor(np.zeros((size, ))) #torch tensor in cpu
-        # data-list: 5*[16,64] (batch_size=16) train_loader-list: 5*[8551,64]
-        for batch_idx, data in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
-            data = tuple(t.to(device) for t in data)
-            input_ids, input_mask, segment_ids, label_ids, seq_lengths = data
-            batch_size = input_ids.size(0)
-            student_logits, _, _, _, _, _, _ = student_model(input_ids, segment_ids, input_mask, is_student=True, epoch=batch_idx)
-            pred_output[batch_idx*batch_size:(batch_idx+1)*batch_size,:] = student_logits.data.cpu() # regression
-            # pred_output[batch_idx*batch_size:(batch_idx+1)*batch_size,:] = student_logits.max(1, keepdim=True)[1].data.cpu() # classification
-            label_in_tensor[batch_idx*batch_size:(batch_idx+1)*batch_size] = label_ids
-        best_sample_weights, best_alpha_m = update_weights(pred_output, label_in_tensor, sample_weights)
-
-    return best_sample_weights, best_alpha_m
-
-# def use_sampled_model(student_model, sampled_model, data):
+# def use_sampled_model(sampled_model, data):
+#     # print(learner.student_model.bert.encoder.layer._modules['0'].attention.self.key.weight)
 #     student_model.load_state_dict(torch.load(sampled_model))
 #     student_model.eval()
+#     # print(learner.student_model.bert.encoder.layer._modules['0'].attention.self.key.weight)
 #     with torch.no_grad():
 #         input_ids, input_mask, segment_ids, label_ids, seq_lengths = data
 #         student_logits, _, _, _, _, _, _ = student_model(input_ids, segment_ids, input_mask)
 
-    # return student_logits
+#     return student_logits
 
 # def combine_softmax_output(pred_test_i, pred_test, alpha_m_mat, i):
 #     pred_test_delta = alpha_m_mat[0][i] * pred_test_i
 #     pred_test = torch.add(pred_test, pred_test_delta.cpu())
 #     return pred_test
 
-def most_common_element(pred_mat, alpha_m_mat, num_boost):
-    pred_most = []
-    pred_mat = pred_mat.astype(int)
-    for i in range(args.batch_size):
-        best_value = -1000
-        best_pred = -1
-        if task_name == "mnli":
-            for j in range(3):
-                mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
-                if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
-                    best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
-                    best_pred = j
-        if task_name == "sts-b":
-            for j in range(5):
-                mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
-                if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
-                    best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
-                    best_pred = j
-        else:
-            for j in range(2):
-                mask = [int(x) for x in (pred_mat[i,:] == j*np.ones((num_boost,), dtype=int))]
-                if np.sum(mask * alpha_m_mat[0][0:0+num_boost]) > best_value:
-                    best_value = np.sum(mask * alpha_m_mat[0][0:0+num_boost])
-                    best_pred = j
-
-        pred_most = np.append(pred_most, best_pred)
-    return pred_most
-
-# def get_median(data):
-#     data.sort()
-#     half = len(data) // 2
-#     return (data[half] + data[~half]) / 2
+# def most_common_element(pred_mat):
+#     pred_most = []
+#     pred_mat = pred_mat.astype(int)
+#     for i in range(args.batch_size):
+#         counts = np.bincount(pred_mat[i,:])
+#         pred_most = np.append(pred_most, np.argmax(counts))
+#     return pred_most
 
 if __name__ == "__main__":
-    boosting = 8
+    bagging = 8
 
+    size = len(train_examples)
     if(task_name == 'cola'):
         category = 'mcc'
     elif(task_name == 'sts-b'):
@@ -866,24 +782,51 @@ if __name__ == "__main__":
     else:
         category = 'acc'
 
-    size = len(train_examples)
-    sample_weights_new = torch.Tensor(np.ones((size,)) / size)
     index_weak_cls = 0
-    alpha_m_mat = torch.Tensor()
 
     # Update sample_weights
-    for i in range(boosting):
-        print("boosting "+str(i))
-        sample_weights_new, alpha_m = sample_models(teacher_model, student_model, size, boosting_iters=i, sample_weights=sample_weights_new)
+    for i in range(bagging):
+        print("bagging "+str(i))
+        sample_weights_new = np.random.choice(size, size=size)
+        sample_models(teacher_model, student_model, size, bagging_iters=i, sample_weights=sample_weights_new)
         print('%s %d-th Sample done !' % (str(datetime.datetime.utcnow()), i))
         index_weak_cls = index_weak_cls + 1
-        alpha_m_mat = torch.cat((alpha_m_mat, alpha_m))
-        print("sample_weights_new",sample_weights_new,'\n')
-    alpha_m_log = -np.log(alpha_m_mat)
-    print("alpha_m_mat: ",alpha_m_mat,alpha_m_log,'\n')
-    print("Bibert boosting finished!")
+    print("no_kd bagging finished!")
 
     #use the sampled model
+    if task_name == "mnli":
+        pred_store = torch.Tensor()
+        mm_logits = {0:[],1:[],2:[],3:[],4:[],5:[],6:[],7:[]}
+        mm_result = {0:[],1:[],2:[],3:[],4:[],5:[],6:[],7:[]}
+        mm_preds = {0:[],1:[],2:[],3:[],4:[],5:[],6:[],7:[]}
+        mm_testloader = DataLoader(mm_eval_data, batch_size=args.batch_size, shuffle=False)
+        for batch_idx, data in enumerate(mm_testloader):
+            data = tuple(t.to(device) for t in data)
+            for i in range(bagging):
+                student_model.load_state_dict(torch.load( args.output_dir + str(i) + ".bin"))
+                student_model.eval()
+                with torch.no_grad():
+                    input_ids, input_mask, segment_ids, label_ids, seq_lengths = data
+                    mm_logits[i], _, _, _, _, _, _ = student_model(input_ids, segment_ids, input_mask)
+                if len(mm_preds[i]) == 0:
+                    mm_preds[i].append(mm_logits[i].detach().cpu().numpy())
+                else:
+                    mm_preds[i][0] = np.append(mm_preds[i][0], mm_logits[i].detach().cpu().numpy(), axis=0)
+        mm_preds_ens = copy.deepcopy(mm_preds)
+        for i in range(bagging):
+            if output_mode == "classification":
+                mm_preds[i] = np.argmax(mm_preds[i][0], axis=1)
+            elif output_mode == "regression":
+                mm_preds[i] = np.squeeze(mm_preds[i][0])       
+            mm_result[i] = compute_metrics(task_name, mm_preds[i], mm_eval_labels.numpy())
+            logging.info('Test accuracy from selected model: %f',mm_result[i][category])
+        predictions = [[0,0,0] for _ in mm_preds_ens[0][0]]
+        for i in range(bagging):
+            predictions += mm_preds_ens[i][0]
+        pred_store = np.argmax(predictions, axis=1)
+        mm_final_result = compute_metrics(task_name, pred_store, mm_eval_labels.numpy())
+        logging.info('Test accuracy from final model: %f',mm_final_result[category])
+
     pred_store = torch.Tensor()
     logits = {0:[],1:[],2:[],3:[],4:[],5:[],6:[],7:[]}
     preds = {0:[],1:[],2:[],3:[],4:[],5:[],6:[],7:[]}
@@ -892,7 +835,7 @@ if __name__ == "__main__":
     testloader = DataLoader(eval_data, batch_size=args.batch_size, shuffle=False)
     for batch_idx, data in enumerate(testloader):
         data = tuple(t.to(device) for t in data)
-        for i in range(boosting):
+        for i in range(bagging):
             student_model.load_state_dict(torch.load( args.output_dir + str(i) + ".bin"))
             student_model.eval()
             with torch.no_grad():
@@ -902,13 +845,10 @@ if __name__ == "__main__":
                 preds[i].append(logits[i].detach().cpu().numpy())
             else:
                 preds[i][0] = np.append(preds[i][0], logits[i].detach().cpu().numpy(), axis=0)
-    
-    preds_ens = alpha_m_mat[0] * preds[0][0]
-    preds_ens_ = alpha_m_log[0] * preds[0][0]
-    for i in range(boosting):
-        if i < (boosting-1):
-            preds_ens = np.append(preds_ens,alpha_m_mat[i+1] * preds[i+1][0],axis=1)
-            preds_ens_ = np.append(preds_ens_,alpha_m_log[i+1] * preds[i+1][0],axis=1)
+
+    preds_ens = copy.deepcopy(preds)
+
+    for i in range(bagging):
         if output_mode == "classification":
             preds[i] = np.argmax(preds[i][0], axis=1)
         elif output_mode == "regression":
@@ -916,47 +856,43 @@ if __name__ == "__main__":
         result[i] = compute_metrics(task_name, preds[i], eval_labels.numpy())
         logging.info('Test accuracy from selected model: %f',result[i][category])
 
-    # preds_ens_ = np.zeros(preds_ens.shape[0])
-    # preds_ = copy.deepcopy(preds)
-    # for j in range(preds_ens.shape[0]):
-    #     preds_ens_[i] = get_median(preds_ens[i])
-    # print(preds_ens_)
-
-    # predictions=0
-    # for i in range(boosting):
-        # predictions += np.array(alpha_m_mat[i] * preds_[i][0])
+    # if(task_name == 'mnli'):
+    #     predictions = [[0,0,0] for _ in preds_ens[0][0]]
+    # elif(task_name == 'sts-b'):
+    #     predictions = [[0] for _ in preds_ens[0][0]]
+    # else:
+    #     predictions = [[0,0] for _ in preds_ens[0][0]]
+    predictions=0
+    for i in range(bagging):
+        predictions += np.array(preds_ens[i][0])
     if output_mode == "classification":
-        pred_store = np.argmax(np.sum(preds_ens,axis=1), axis=1)
+        pred_store = np.argmax(predictions, axis=1)
     elif output_mode == "regression":
-        pred_store = np.squeeze(np.sum(preds_ens_,axis=1)/boosting)
+        pred_store = np.squeeze(predictions/bagging)
     final_result = compute_metrics(task_name, pred_store, eval_labels.numpy())
     logging.info('Test accuracy from final model: %f',final_result[category])
 
     # #use the sampled model
-    # for num_boost in range(1,boosting):
+    # for num_bagging in range(1,bagging):
     #     final_result_np = []
     #     final_result = {}
-
-    #     for batch_idx, data in enumerate(eval_data):
+    #     testloader = DataLoader(eval_data, batch_size=args.batch_size, shuffle=False)
+    #     for batch_idx, data in enumerate(testloader):
     #         data = tuple(t.to(device) for t in data)
     #         pred_store = torch.Tensor()
-    #         for i in range(num_boost):
+    #         for i in range(num_bagging):
     #             sampled_model = args.output_dir + str(i) + ".bin"
-    #             pred_test_i = use_sampled_model(student_model, sampled_model,data)
+    #             pred_test_i = use_sampled_model(sampled_model,data)
     #             if(pred_test_i.size()[0]!=(args.batch_size)):
     #                 continue
-    #             pred = pred_test_i.max(1, keepdim=True)[1]
-    #             pred_store = torch.cat((pred_store, pred.data.cpu().float()), 1)
+    #             pred = pred_test_i.max(1, keepdim=True)[1] # 位置是0/1
+    #             pred_store = torch.cat((pred_store, pred.data.cpu().float()), 1) # 存了每个batch下8个模型的预测
     #         if(pred_test_i.size()[0]!=(args.batch_size)):
     #             continue
-    #         pred_most = most_common_element(pred_store.numpy(), alpha_m_mat.numpy(), num_boost)
-    #         # print("result: ",pred_most,"\n",eval_labels[batch_idx*args.batch_size:(batch_idx+1)*args.batch_size].numpy(),"\n")
-    #         result = compute_metrics(task_name, pred_most, eval_labels[batch_idx*args.batch_size:(batch_idx+1)*args.batch_size].numpy())
-
+    #         pred_most = most_common_element(pred_store.numpy()) # 每个batch下8个模型的最终预测
+    #         result = compute_metrics(task_name, pred_most, evaluate_labels[batch_idx*args.batch_size:(batch_idx+1)*args.batch_size].numpy())
+    #         每个batch的最终预测result，append起来变成testloader的最终预测final_result_np   
     #         final_result_np = np.append(final_result_np, result[category])
-    #     # final_result = dict(final_result, **result)
-    #     # output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
-    #     # result_to_file(final_result, output_eval_file)
 
-    #     print('--------------------'+'num_boost: '+str(num_boost)+'--------------------')
-    #     print('\n Test accuracy from selected model:',np.mean(final_result_np))
+    #     print('--------------------'+'num_bagging: '+str(num_bagging)+'--------------------')
+    #     print('\n Test accuracy from selected model:',np.mean(final_result_np)) # 怎么能求均值呢？？

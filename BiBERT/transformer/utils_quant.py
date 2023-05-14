@@ -13,8 +13,12 @@ class BinaryQuantizer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input):
         ctx.save_for_backward(input)
-        out = torch.sign(input)
-        return out
+        s = input.size()
+        m = input.norm(p=1).div(input.nelement())
+        result = input.sign().mul(m.expand(s))
+        return result
+        # out = torch.sign(input)
+        # return out
 
     @staticmethod
     def backward(ctx, grad_output):

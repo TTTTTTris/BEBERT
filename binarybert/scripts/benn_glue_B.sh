@@ -9,7 +9,7 @@ export abits=4
 export JOB_ID=Ternary_W${wbits}A${abits}
 export GLUE_DIR=./glue_data
 export TEACHER_MODEL_DIR=models/dynabert/${TASK_NAME}
-export STUDENT_MODEL_DIR=output_B_aug/Ternary_W2A4/${TASK_NAME}/kd_stage2/ 
+export STUDENT_MODEL_DIR=output_B/Ternary_W2A4/${TASK_NAME}/kd_stage2/ 
 
 if [ $abits == 4 ]
 then
@@ -29,7 +29,7 @@ python benn_glue_train_B.py \
     --eval_step 100 \
     --num_train_epochs 1 \
     --ACT2FN ${ACT2FN} \
-    --output_dir output_B_aug/${JOB_ID}/${TASK_NAME} \
+    --output_dir output_B/${JOB_ID}/${TASK_NAME} \
     --kd_type two_stage \
     --task_name $TASK_NAME \
     --teacher_model ${TEACHER_MODEL_DIR} \
@@ -41,5 +41,4 @@ python benn_glue_train_B.py \
     --clip_lr 1e-4 \
     --learnable_scaling \
     --is_binarybert \
-    --aug_train \
-    --split 2>&1 | tee -a nohup_out_aug/${TASK_NAME}_B.out
+    --split 2>&1 | tee -a nohup_out/${TASK_NAME}_B.out
